@@ -197,13 +197,13 @@
   .bar-track{height:10px; background:#EFEAD9; border-radius:6px; overflow:hidden; position:relative;}
   .bar-fill{height:100%; border-radius:6px;}
 
-  .modal-overlay{position:fixed; inset:0; background:rgba(31,42,36,0.45); display:flex; align-items:center; justify-content:center; z-index:50;}
+  .modal-overlay{position:fixed; inset:0; background:rgba(31,42,36,0.45); display:flex; align-items:center; justify-content:center; z-index:150;}
   .modal{background:#fff; border-radius:12px; padding:24px; width:380px; max-width:90vw; box-shadow:0 20px 60px rgba(0,0,0,0.25);}
   .modal h3{margin:0 0 8px; font-size:17px;}
   .modal p{font-size:13.5px; color:var(--ink-soft); margin:0 0 18px;}
   .modal-actions{display:flex; justify-content:flex-end; gap:8px;}
 
-  .toast{position:fixed; bottom:24px; right:24px; background:var(--green-dark); color:#fff; padding:12px 18px; border-radius:8px; font-size:13.5px; box-shadow:0 8px 24px rgba(0,0,0,0.2); z-index:60; opacity:0; transform:translateY(8px); transition:all .25s ease; pointer-events:none;}
+  .toast{position:fixed; bottom:24px; right:24px; background:var(--green-dark); color:#fff; padding:12px 18px; border-radius:8px; font-size:13.5px; box-shadow:0 8px 24px rgba(0,0,0,0.2); z-index:160; opacity:0; transform:translateY(8px); transition:all .25s ease; pointer-events:none;}
   .toast.show{opacity:1; transform:translateY(0);}
 
   .student-chip-list{display:flex; flex-wrap:wrap; gap:8px; margin-top:8px;}
@@ -558,12 +558,12 @@ function renderNav(){
     foot.innerHTML = `Anda masuk sebagai <b style="color:#fff;">Admin</b>. Semua data tersimpan otomatis &amp; dibagikan ke semua pengguna.
       <button class="sidebar-link-btn" id="logout-btn" style="margin-top:10px;">Keluar (jadi Viewer)</button>`;
     const logoutBtn = document.getElementById('logout-btn');
-    if(logoutBtn) logoutBtn.addEventListener('click', doLogout);
+    if(logoutBtn) logoutBtn.addEventListener('click', ()=>{ if(window.closeMobileDrawer) window.closeMobileDrawer(); doLogout(); });
   } else {
     foot.innerHTML = `Anda melihat versi baca-saja. Masuk sebagai Admin untuk mengelola data.
       <button class="sidebar-link-btn" id="login-btn" style="margin-top:10px;">${ICONS.lock.replace('viewBox="0 0 24 24"','viewBox="0 0 24 24" width="13" height="13"')} Masuk sebagai Admin</button>`;
     const loginBtn = document.getElementById('login-btn');
-    if(loginBtn) loginBtn.addEventListener('click', showLoginModal);
+    if(loginBtn) loginBtn.addEventListener('click', ()=>{ if(window.closeMobileDrawer) window.closeMobileDrawer(); showLoginModal(); });
   }
 }
 
@@ -1691,6 +1691,7 @@ function attachAccessHandlers(){
 
 /* ============================= INIT ============================= */
 (async function init(){
+  setupMobileDrawer();
   render();
   await loadAll();
   render();
