@@ -42,6 +42,27 @@
 
   #app{display:flex; min-height:100vh;}
 
+  /* Mobile topbar (hidden on desktop) */
+  .topbar{
+    display:none; align-items:center; gap:12px;
+    padding:14px 16px; background:linear-gradient(180deg,var(--green) 0%, var(--green-dark) 100%);
+    color:#EFE9D8; position:sticky; top:0; z-index:80;
+  }
+  .topbar .hamburger{
+    width:36px; height:36px; border-radius:8px; border:1px solid rgba(239,233,216,0.25);
+    background:rgba(239,233,216,0.08); color:#EFE9D8; display:flex; align-items:center; justify-content:center;
+    cursor:pointer; flex-shrink:0;
+  }
+  .topbar .hamburger svg{width:19px; height:19px;}
+  .topbar .mark-sm{
+    width:28px; height:28px; border-radius:7px; background:var(--gold); color:var(--green-dark);
+    display:flex; align-items:center; justify-content:center; font-family:'Fraunces',serif; font-weight:700; font-size:14px; flex-shrink:0;
+  }
+  .topbar .topbar-title{font-family:'Fraunces',serif; font-size:16px; font-weight:600; flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+  .topbar .topbar-badge{font-size:10px; font-weight:600; padding:3px 8px; border-radius:20px; background:rgba(239,233,216,0.14); flex-shrink:0;}
+
+  .sidebar-overlay{display:none; position:fixed; inset:0; background:rgba(31,42,36,0.45); z-index:90;}
+
   /* Sidebar */
   .sidebar{
     width:232px; flex-shrink:0;
@@ -199,11 +220,60 @@
 
   ::-webkit-scrollbar{width:10px; height:10px;}
   ::-webkit-scrollbar-thumb{background:#DCD5C0; border-radius:6px;}
+
+  /* ============================= RESPONSIVE / MOBILE ============================= */
+  @media (max-width:900px){
+    #app{display:block;}
+    .topbar{display:flex;}
+    .sidebar-overlay.open{display:block;}
+    .sidebar{
+      position:fixed; top:0; left:0; height:100vh; z-index:95;
+      transform:translateX(-100%); transition:transform .25s ease;
+      box-shadow:0 0 40px rgba(0,0,0,0.3);
+    }
+    .sidebar.open{transform:translateX(0);}
+    main{padding:20px 16px 48px;}
+    .page-head{flex-direction:column; align-items:flex-start; gap:10px;}
+    .page-head h2{font-size:21px;}
+    .grid-4, .grid-5{grid-template-columns:repeat(2,1fr); gap:10px;}
+    .form-grid{grid-template-columns:1fr; gap:12px;}
+    .balance-card .amount{font-size:17px;}
+    .balance-card{padding:14px 14px 12px;}
+    table{font-size:12.5px;}
+    th, td{padding:9px 10px;}
+    .modal{width:92vw; padding:20px;}
+    .report-controls{flex-direction:column; align-items:stretch;}
+    .report-controls .field{min-width:0;}
+    .bar-row{grid-template-columns:84px 1fr 84px; font-size:11.5px; gap:6px;}
+    .recap-summary{grid-template-columns:repeat(2,1fr);}
+    .export-row{width:100%;}
+    .export-row .btn{flex:1; justify-content:center;}
+    .toolbar{flex-direction:column; align-items:stretch; gap:10px;}
+    .filters{width:100%;}
+    .toast{left:16px; right:16px; bottom:16px; text-align:center;}
+  }
+  @media (max-width:480px){
+    .grid-4, .grid-5{grid-template-columns:1fr;}
+    .recap-summary{grid-template-columns:1fr;}
+    .page-head h2{font-size:19px;}
+    .brand h1{font-size:17px;}
+    .student-chip{font-size:12px;}
+    .btn{font-size:13px; padding:9px 14px;}
+  }
 </style>
 </head>
 <body>
 <div id="app">
-  <aside class="sidebar">
+  <div class="topbar" id="topbar">
+    <button class="hamburger" id="hamburger-btn" aria-label="Buka menu">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+    </button>
+    <div class="mark-sm">K</div>
+    <div class="topbar-title">Buku Kas Kelas</div>
+    <div class="topbar-badge" id="topbar-badge"></div>
+  </div>
+  <div class="sidebar-overlay" id="sidebar-overlay"></div>
+  <aside class="sidebar" id="sidebar">
     <div class="brand">
       <div class="mark">K</div>
       <h1>Buku Kas Kelas</h1>
@@ -446,6 +516,18 @@ function getTotalBalance(){
   return CATEGORIES.reduce((sum,c)=>sum+getCurrentBalance(c.key),0);
 }
 
+/* ============================= MOBILE DRAWER ============================= */
+function setupMobileDrawer(){
+  const sidebar = document.getElementById('sidebar');
+  const overlay = document.getElementById('sidebar-overlay');
+  const hamburger = document.getElementById('hamburger-btn');
+  function openDrawer(){ sidebar.classList.add('open'); overlay.classList.add('open'); }
+  function closeDrawer(){ sidebar.classList.remove('open'); overlay.classList.remove('open'); }
+  if(hamburger) hamburger.addEventListener('click', openDrawer);
+  if(overlay) overlay.addEventListener('click', closeDrawer);
+  window.closeMobileDrawer = closeDrawer;
+}
+
 /* ============================= RENDER ROOT ============================= */
 function renderNav(){
   const nav = document.getElementById('nav');
@@ -456,8 +538,15 @@ function renderNav(){
     </button>
   `).join('');
   nav.querySelectorAll('.nav-item').forEach(btn=>{
-    btn.addEventListener('click', ()=>{ currentPage = btn.dataset.page; render(); });
+    btn.addEventListener('click', ()=>{
+      currentPage = btn.dataset.page;
+      render();
+      if(window.closeMobileDrawer) window.closeMobileDrawer();
+    });
   });
+
+  const topbarBadge = document.getElementById('topbar-badge');
+  if(topbarBadge) topbarBadge.textContent = currentRole==='admin' ? 'Admin' : 'Viewer';
 
   const badge = document.getElementById('brand-badge');
   badge.innerHTML = currentRole==='admin'
