@@ -9,6 +9,8 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
 <style>
   :root{
     --paper:#FAF6EC;
@@ -279,6 +281,7 @@
       <h1>Buku Kas Kelas</h1>
       <p>Kas &middot; Komite &middot; Tabungan &middot; Sosial</p>
       <div id="brand-badge"></div>
+      <div id="sync-status" style="font-size:10.5px; color:#B9C2AC; margin-top:8px;"></div>
     </div>
     <nav id="nav"></nav>
     <div class="sidebar-foot" id="sidebar-foot"></div>
@@ -389,6 +392,65 @@ function showLoginModal(){
 }
 
 /* ============================= STATE ============================= */
+/* =====================================================================
+   KONFIGURASI SINKRONISASI DATA (PENTING SAAT DI-HOSTING SENDIRI)
+   =====================================================================
+   Secara default aplikasi ini memakai penyimpanan bawaan Claude (window.storage),
+   yang HANYA berfungsi saat file ini dibuka di dalam Claude.ai. Begitu di-hosting
+   sendiri (GitHub Pages, Netlify, localhost, dst.), window.storage tidak tersedia,
+   sehingga data tidak akan tersimpan maupun tersinkron ke pengguna lain.
+
+   Agar data tersimpan permanen DAN tersinkron real-time ke semua orang yang
+   membuka aplikasi ini di hosting mana pun, isi FIREBASE_CONFIG di bawah ini
+   dengan konfigurasi proyek Firebase Realtime Database Anda sendiri (gratis):
+     1. Buka https://console.firebase.google.com, buat proyek baru (gratis).
+     2. Di menu kiri: Build > Realtime Database > Create Database
+        (pilih mode "Test mode" agar bisa baca/tulis tanpa login dulu).
+     3. Di menu kiri: Project settings > General > scroll ke "Your apps" >
+        klik ikon web (</>) > daftarkan aplikasi > salin object firebaseConfig.
+     4. Tempel nilai-nilainya ke FIREBASE_CONFIG di bawah, lalu simpan &
+        unggah ulang file ini ke hosting Anda.
+   Jika FIREBASE_CONFIG dibiarkan kosong, aplikasi otomatis kembali memakai
+   window.storage (khusus di dalam Claude.ai) sebagai fallback.
+   ===================================================================== */
+const FIREBASE_CONFIG = {
+  apiKey: "",
+  authDomain: "",
+  databaseURL: "",
+  projectId: "",
+  storageBucket: "",
+  messagingSenderId: "",
+  appId: ""
+};
+
+let BACKEND = 'none'; // 'firebase' | 'claude' | 'none'
+let fbDb = null;
+
+function isFirebaseConfigured(){
+  return !!(FIREBASE_CONFIG.apiKey && FIREBASE_CONFIG.databaseURL);
+}
+
+async function initBackend(){
+  if(isFirebaseConfigured() && window.firebase){
+    try{
+      firebase.initializeApp(FIREBASE_CONFIG);
+      fbDb = firebase.database();
+      // quick connectivity check
+      await fbDb.ref('.info/connected').once('value');
+      BACKEND = 'firebase';
+      return;
+    }catch(e){
+      console.error('Firebase init error', e);
+    }
+  }
+  if(window.storage){
+    BACKEND = 'claude';
+    return;
+  }
+  BACKEND = 'none';
+}
+
+/* ============================= STORAGE HELPERS (abstraksi backend) ============================= */
 let STATE = {
   students: [],
   income: [],
@@ -397,47 +459,86 @@ let STATE = {
 };
 let currentPage = 'dashboard';
 
-/* ============================= STORAGE HELPERS ============================= */
+async function storageGetRaw(key){
+  if(BACKEND==='firebase'){
+    try{
+      const snap = await fbDb.ref(key).get();
+      return snap.exists() ? snap.val() : null;
+    }catch(e){ console.error('Firebase get error', key, e); return null; }
+  }
+  if(BACKEND==='claude'){
+    try{
+      const r = await window.storage.get(key, true);
+      return r ? JSON.parse(r.value) : null;
+    }catch(e){ return null; }
+  }
+  return null;
+}
+async function storageSetRaw(key, value){
+  if(BACKEND==='firebase'){
+    try{ await fbDb.ref(key).set(value); return true; }
+    catch(e){ console.error('Firebase set error', key, e); showToast('Gagal menyimpan ke server Firebase.'); return false; }
+  }
+  if(BACKEND==='claude'){
+    try{ const r = await window.storage.set(key, JSON.stringify(value), true); return !!r; }
+    catch(e){ console.error('Claude storage set error', key, e); showToast('Gagal menyimpan data. Coba lagi.'); return false; }
+  }
+  showToast('⚠ Data tidak tersimpan permanen — belum ada koneksi penyimpanan (lihat Pengaturan Akses).');
+  return false;
+}
+async function saveKey(key, value){
+  return storageSetRaw(key, value);
+}
+
+function applySettingsValue(v){
+  APP_SETTINGS = {
+    adminPasscode: (v && v.adminPasscode) || DEFAULT_ADMIN_PASSCODE,
+    viewerPages: (v && Array.isArray(v.viewerPages)) ? v.viewerPages : DEFAULT_VIEWER_PAGES.slice(),
+  };
+}
+
 async function loadAll(){
   try{
     const [s, inc, exp, settings] = await Promise.all([
-      safeGet('students'), safeGet('income'), safeGet('expense'), safeGet('app_settings')
+      storageGetRaw('students'), storageGetRaw('income'), storageGetRaw('expense'), storageGetRaw('app_settings')
     ]);
-    STATE.students = s ? JSON.parse(s) : [];
-    STATE.income = inc ? JSON.parse(inc) : [];
-    STATE.expense = exp ? JSON.parse(exp) : [];
-    if(settings){
-      try{
-        const parsed = JSON.parse(settings);
-        APP_SETTINGS = {
-          adminPasscode: parsed.adminPasscode || DEFAULT_ADMIN_PASSCODE,
-          viewerPages: Array.isArray(parsed.viewerPages) ? parsed.viewerPages : DEFAULT_VIEWER_PAGES.slice(),
-        };
-      }catch(e){ console.error('Parse app_settings error', e); }
-    }
+    STATE.students = s || [];
+    STATE.income = inc || [];
+    STATE.expense = exp || [];
+    if(settings) applySettingsValue(settings);
   }catch(e){
     console.error('Load error', e);
   }
   STATE.loaded = true;
 }
-async function safeGet(key){
-  try{
-    const r = await window.storage.get(key, true);
-    return r ? r.value : null;
-  }catch(e){
-    return null;
-  }
+
+/* ============================= REAL-TIME SYNC (Firebase) & POLLING (fallback) ============================= */
+function setupRealtimeSync(){
+  if(BACKEND!=='firebase') return;
+  fbDb.ref('students').on('value', snap=>{ STATE.students = snap.exists()? snap.val() : []; STATE.loaded = true; render(); });
+  fbDb.ref('income').on('value', snap=>{ STATE.income = snap.exists()? snap.val() : []; STATE.loaded = true; render(); });
+  fbDb.ref('expense').on('value', snap=>{ STATE.expense = snap.exists()? snap.val() : []; STATE.loaded = true; render(); });
+  fbDb.ref('app_settings').on('value', snap=>{ if(snap.exists()){ applySettingsValue(snap.val()); render(); } });
+  fbDb.ref('.info/connected').on('value', snap=>{ firebaseConnected = snap.val()===true; renderNav(); });
 }
-async function saveKey(key, value){
-  try{
-    const r = await window.storage.set(key, JSON.stringify(value), true);
-    if(!r) throw new Error('no result');
-    return true;
-  }catch(e){
-    console.error('Save error', key, e);
-    showToast('Gagal menyimpan data. Coba lagi.');
-    return false;
-  }
+let firebaseConnected = false;
+let pollTimer = null;
+function setupPollingSync(){
+  if(BACKEND!=='claude') return;
+  if(pollTimer) clearInterval(pollTimer);
+  pollTimer = setInterval(async ()=>{
+    try{
+      const [s, inc, exp, settings] = await Promise.all([
+        storageGetRaw('students'), storageGetRaw('income'), storageGetRaw('expense'), storageGetRaw('app_settings')
+      ]);
+      let changed = false;
+      if(JSON.stringify(s||[]) !== JSON.stringify(STATE.students)){ STATE.students = s||[]; changed = true; }
+      if(JSON.stringify(inc||[]) !== JSON.stringify(STATE.income)){ STATE.income = inc||[]; changed = true; }
+      if(JSON.stringify(exp||[]) !== JSON.stringify(STATE.expense)){ STATE.expense = exp||[]; changed = true; }
+      if(settings && JSON.stringify(settings) !== JSON.stringify(APP_SETTINGS)){ applySettingsValue(settings); changed = true; }
+      if(changed) render();
+    }catch(e){ console.error('Polling sync error', e); }
+  }, 8000);
 }
 
 /* ============================= GLOBAL ERROR BANNER ============================= */
@@ -529,6 +630,14 @@ function setupMobileDrawer(){
 }
 
 /* ============================= RENDER ROOT ============================= */
+function getSyncStatus(){
+  if(BACKEND==='firebase') return firebaseConnected
+    ? { dot:'#3F7D4E', text:'Tersinkron real-time (Firebase)' }
+    : { dot:'#B8912F', text:'Firebase terpasang, menyambungkan…' };
+  if(BACKEND==='claude') return { dot:'#B8912F', text:'Tersimpan (sinkron tiap ±8 detik)' };
+  return { dot:'#A63D40', text:'Tidak tersimpan — atur Firebase' };
+}
+
 function renderNav(){
   const nav = document.getElementById('nav');
   const items = getVisibleNavItems();
@@ -552,6 +661,10 @@ function renderNav(){
   badge.innerHTML = currentRole==='admin'
     ? `<div class="viewer-badge" style="background:rgba(184,145,47,0.22); color:var(--gold);">${ICONS.lock.replace('viewBox="0 0 24 24"','viewBox="0 0 24 24" width="12" height="12"')} Admin</div>`
     : `<div class="viewer-badge">${ICONS.eye.replace('viewBox="0 0 24 24"','viewBox="0 0 24 24" width="13" height="13"')} Viewer</div>`;
+
+  const sync = getSyncStatus();
+  const syncEl = document.getElementById('sync-status');
+  if(syncEl) syncEl.innerHTML = `<span style="display:inline-block; width:7px; height:7px; border-radius:50%; background:${sync.dot}; margin-right:6px;"></span>${sync.text}`;
 
   const foot = document.getElementById('sidebar-foot');
   if(currentRole==='admin'){
@@ -1635,9 +1748,22 @@ function renderAccessPage(){
       </label>`;
   }).join('');
 
+  const sync = getSyncStatus();
+  const backendLabel = BACKEND==='firebase' ? 'Firebase Realtime Database' : (BACKEND==='claude' ? 'Penyimpanan bawaan Claude (window.storage)' : 'Tidak ada — data hanya tersimpan sementara di layar ini');
+
   return `
     <div class="page-head">
       <div><h2>Pengaturan Akses</h2><div class="sub">Atur halaman yang boleh dilihat oleh Viewer, dan kata sandi Admin</div></div>
+    </div>
+
+    <div class="section-title">Status Sinkronisasi Data</div>
+    <div class="card" style="padding:16px 18px;">
+      <div style="display:flex; align-items:center; gap:8px; font-weight:600; margin-bottom:6px;">
+        <span style="display:inline-block; width:9px; height:9px; border-radius:50%; background:${sync.dot};"></span>
+        ${sync.text}
+      </div>
+      <div class="hint">Backend aktif: <b>${backendLabel}</b>.</div>
+      ${BACKEND!=='firebase' ? `<div class="hint" style="margin-top:8px;">Agar data tersimpan permanen dan tersinkron <b>real-time</b> ke semua orang saat aplikasi ini di-hosting sendiri (GitHub Pages, dsb.), isi <code>FIREBASE_CONFIG</code> di bagian atas kode sumber file ini dengan konfigurasi proyek Firebase Realtime Database gratis Anda, lalu unggah ulang. Instruksi lengkap ada sebagai komentar tepat di atas <code>FIREBASE_CONFIG</code> pada kode.</div>` : `<div class="hint" style="margin-top:8px;">Perubahan yang dilakukan siapa pun akan langsung muncul ke semua orang yang sedang membuka aplikasi ini, tanpa perlu memuat ulang halaman.</div>`}
     </div>
 
     <div class="section-title">Halaman untuk Viewer</div>
@@ -1693,8 +1819,14 @@ function attachAccessHandlers(){
 (async function init(){
   setupMobileDrawer();
   render();
-  await loadAll();
-  render();
+  await initBackend();
+  if(BACKEND==='firebase'){
+    setupRealtimeSync();
+  } else {
+    await loadAll();
+    render();
+    setupPollingSync();
+  }
 })();
 </script>
 </body>
